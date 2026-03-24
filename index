@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Meeting Hub - lee hyo 전용 비서</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700&display=swap');
+        body { font-family: 'Pretendard', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .recording-pulse { animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.05); } }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const MeetingHub = () => {
+            const [activeTab, setActiveTab] = useState('home');
+            const [status, setStatus] = useState('idle');
+            const [cards, setCards] = useState([]);
+            const [summary, setSummary] = useState(null);
+            const [reactions, setReactions] = useState([
+                { id: 1, user: "김팀장", text: "정리가 깔끔하네요! 바로 진행하시죠.", emoji: "👍" },
+                { id: 2, user: "이대리", text: "명함 메모 기능 진짜 편할 것 같아요.", emoji: "🔥" }
+            ]);
+
+            useEffect(() => {
+                const saved = localStorage.getItem('hyo_meeting_data');
+                if (saved) setCards(JSON.parse(saved));
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('hyo_meeting_data', JSON.stringify(cards));
+                if (window.lucide) window.lucide.createIcons();
+            }, [activeTab, status, cards]);
+
+            const handleRecord = () => {
+                if (status === 'idle') setStatus('recording');
+                else {
+                    setStatus('analyzing');
+                    setTimeout(() => {
+                        setSummary({
+                            title: "신규 프로젝트 기획 미팅",
+                            text: "모바일 연동 및 구글 캘린더 자동 등록 기능을 우선 순위로 개발하기로 확정했습니다.",
+                            todos: ["모바일 최적화 UI 적용", "공유 링크 생성 기능", "실시간 피드백 모듈"]
+                        });
+                        setStatus('done');
+                    }, 2000);
+                }
+            };
+
+            return (
+                <div className="max-w-md mx-auto bg-white min-h-screen relative flex flex-col shadow-2xl overflow-hidden">
+                    {/* 상단바 */}
+                    <div className="bg-indigo-600 p-6 text-white pt-10 rounded-b-[40px] shadow-lg">
+                        <div className="flex justify-between items-center">
+                            <h1 className="text-2xl font-bold italic tracking-tighter">Meeting Hub</h1>
+                            <div className="bg-indigo-400/30 p-2 rounded-full"><i data-lucide="share-2" className="w-5 h-5"></i></div>
+                        </div>
+                        <p className="text-indigo-100 text-xs mt-1 opacity-80 underline decoration-indigo-300">lee hyo 친구의 스마트 비서 Mobile</p>
+                    </div>
+
+                    <div className="flex-1 p-6 overflow-y-auto pb-32">
+                        {activeTab === 'home' && (
+                            <div className="space-y-6 animate-in fade-in duration-500">
+                                <div className="bg-slate-50 rounded-[30px] p-8 text-center border border-slate-100 shadow-inner">
+                                    {status === 'analyzing' ? (
+                                        <div className="py-5 space-y-4">
+                                            <i data-lucide="loader-2" className="w-12 h-12 text-indigo-600 animate-spin mx-auto"></i>
+                                            <p className="text-sm font-bold text-slate-600 italic">클로바노트 분석 중...</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <button 
+                                                onClick={handleRecord}
+                                                className={`w-24 h-24 rounded-full mx-auto flex items-center justify-center shadow-2xl transition-all active:scale-90 ${status === 'recording' ? 'bg-red-500 recording-pulse' : 'bg-indigo-600'}`}
+                                            >
+                                                <i data-lucide={status === 'recording' ? "square" : "mic"} className="text-white w-10 h-10"></i>
+                                            </button>
+                                            <h3 className="font-bold text-slate-800">{status === 'recording' ? '회의 기록 중...' : '오늘의 회의 시작'}</h3>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {summary && (
+                                    <div className="space-y-6">
+                                        <div className="bg-white rounded-3xl border-2 border-indigo-50 p-5 shadow-xl space-y-4 animate-in slide-in-from-bottom-5">
+                                            <div className="flex items-center space-x-2 text-indigo-600 font-bold text-sm italic">
+                                                <i data-lucide="file-text" className="w-4 h-4"></i>
+                                                <span>수신된 요약 리포트</span>
+                                            </div>
+                                            <p className="text-sm text-slate-600 leading-relaxed font-medium">"{summary.text}"</p>
+                                        </div>
+
+                                        {/* 주변 반응 (Feedback) 섹션 */}
+                                        <div className="space-y-3">
+                                            <h4 className="font-bold text-slate-800 text-sm flex items-center px-2">
+                                                <i data-lucide="message-circle" className="w-4 h-4 mr-2 text-pink-500"></i>
+                                                팀원 실시간 반응
+                                            </h4>
+                                            <div className="space-y-2">
+                                                {reactions.map(r => (
+                                                    <div key={r.id} className="bg-pink-50 p-3 rounded-2xl flex items-start space-x-3 border border-pink-100">
+                                                        <div className="text-xl">{r.emoji}</div>
+                                                        <div>
+                                                            <p className="text-[10px] font-bold text-pink-400">{r.user}</p>
+                                                            <p className="text-xs text-pink-900 leading-tight">{r.text}</p>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        
+                        {activeTab === 'card' && (
+                            <div className="py-10 text-center space-y-4 animate-in fade-in">
+                                <i data-lucide="camera" className="w-16 h-16 mx-auto text-slate-200"></i>
+                                <p className="text-slate-400 text-sm">명함 스캔 기능은 모바일 브라우저<br/>카메라 권한이 필요합니다.</p>
+                                <button className="px-6 py-3 bg-indigo-600 text-white rounded-full font-bold text-sm">카메라 활성화</button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 하단 탭 바 */}
+                    <div className="absolute bottom-0 w-full bg-white/80 backdrop-blur-xl border-t border-slate-100 flex justify-around p-5 rounded-t-[40px] shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
+                        <button onClick={() => setActiveTab('home')} className={`flex flex-col items-center transition-all ${activeTab === 'home' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}>
+                            <i data-lucide="mic"></i>
+                            <span className="text-[10px] font-bold mt-1">회의관리</span>
+                        </button>
+                        <button onClick={() => setActiveTab('card')} className={`flex flex-col items-center transition-all ${activeTab === 'card' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}>
+                            <i data-lucide="camera"></i>
+                            <span className="text-[10px] font-bold mt-1">명함기록</span>
+                        </button>
+                        <button onClick={() => setActiveTab('list')} className={`flex flex-col items-center transition-all ${activeTab === 'list' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}>
+                            <i data-lucide="users"></i>
+                            <span className="text-[10px] font-bold mt-1">주변반응</span>
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<MeetingHub />);
+    </script>
+</body>
+</html>

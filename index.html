@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Meeting Hub AI v4.3</title>
+    <title>Meeting Hub AI v4.4</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -30,12 +30,17 @@
             const [isRecording, setIsRecording] = useState(false);
             const [isAnalyzing, setIsAnalyzing] = useState(false);
             const [cards, setCards] = useState([]);
+            
+            // 텍스트 누적을 위한 Ref
+            const cumulativeTranscript = useRef("");
+
             const [newCard, setNewCard] = useState({ 
-                name: "", 
+                title: "", 
                 date: new Date().toISOString().split('T')[0],
-                personInfo: "", // 명함 추출 텍스트
-                personMemo: "", // 인원에 대한 메모
-                voiceSummary: "" // 녹음 요약
+                // 명함 세부 정보
+                company: "", name: "", phone: "", email: "", address: "",
+                personMemo: "", // 인물/회의 관련 별도 메모
+                voiceSummary: "" // 누적 녹음 본
             });
 
             const recognitionRef = useRef(null);
@@ -53,14 +58,18 @@
                     recognitionRef.current.lang = 'ko-KR';
 
                     recognitionRef.current.onresult = (event) => {
-                        let current = "";
+                        let interim = "";
                         for (let i = event.resultIndex; i < event.results.length; i++) {
-                            current += event.results[i][0].transcript;
+                            const speech = event.results[i][0].transcript;
+                            if (event.results[i].isFinal) {
+                                cumulativeTranscript.current += speech + " ";
+                            } else {
+                                interim += speech;
+                            }
                         }
-                        setNewCard(prev => ({ ...prev, voiceSummary: current }));
+                        setNewCard(prev => ({ ...prev, voiceSummary: cumulativeTranscript.current + interim }));
                     };
 
-                    // 마이크 끊김 방지: 의도치 않게 멈추면 재시작
                     recognitionRef.current.onend = () => {
                         if (isRecording) recognitionRef.current.start();
                     };
@@ -82,123 +91,140 @@
                 }
             };
 
-            const handleCameraClick = () => fileInputRef.current.click();
+            const parseOCR = (text) => {
+                const phoneRegex = /(010-\d{3,4}-\d{4}|0\d{1,2}-\d{3,4}-\d{4})/g;
+                const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+                const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+                setNewCard(prev => ({
+                    ...prev,
+                    company: lines[0] || "", // 첫 줄은 보통 회사명
+                    name: lines[1] || "",    // 둘째 줄은 보통 이름
+                    phone: text.match(phoneRegex)?.[0] || "",
+                    email: text.match(emailRegex)?.[0] || "",
+                    address: lines.find(l => l.includes("시 ") || l.includes("구 ") || l.includes("동 ")) || ""
+                }));
+            };
 
             const handleFileChange = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-
                 setIsAnalyzing(true);
                 try {
                     const result = await Tesseract.recognize(file, 'kor+eng');
-                    const extractedText = result.data.text.trim();
-                    setNewCard(prev => ({ 
-                        ...prev, 
-                        personInfo: extractedText,
-                        name: extractedText.split('\n')[0] // 첫 줄을 보통 이름으로 추정
-                    }));
-                    alert("명함 분석 완료!");
-                } catch (error) {
-                    alert("OCR 분석 실패: " + error.message);
-                } finally {
-                    setIsAnalyzing(false);
-                }
+                    parseOCR(result.data.text);
+                    alert("명함 분석 및 자동 필터링 완료!");
+                } catch (e) { alert("인식 실패: " + e.message); }
+                finally { setIsAnalyzing(false); }
             };
 
             const saveEntry = () => {
-                if (!newCard.name) return alert("회의명이나 성함을 입력하세요.");
+                if (!newCard.title && !newCard.name) return alert("제목이나 이름을 입력하세요.");
                 setCards([{ ...newCard, id: Date.now() }, ...cards]);
-                setNewCard({ name: "", date: new Date().toISOString().split('T')[0], personInfo: "", personMemo: "", voiceSummary: "" });
-                alert("성공적으로 저장되었습니다!");
-            };
-
-            const copyForAI = (card) => {
-                const text = `[회의 요약 요청]\n일시: ${card.date}\n제목: ${card.name}\n\n1. 명함 정보:\n${card.personInfo}\n\n2. 인물 메모:\n${card.personMemo}\n\n3. 녹음 내용:\n${card.voiceSummary}\n\n위 내용을 요약하고 구글 캘린더 등록용 링크들을 만들어줘.`;
-                navigator.clipboard.writeText(text);
-                alert("AI 전달용 데이터가 복사되었습니다!");
+                setNewCard({ title: "", date: new Date().toISOString().split('T')[0], company: "", name: "", phone: "", email: "", address: "", personMemo: "", voiceSummary: "" });
+                cumulativeTranscript.current = "";
+                alert("통합 기록 저장 완료!");
             };
 
             return (
-                <div className="max-w-md mx-auto bg-white min-h-screen relative flex flex-col shadow-2xl">
-                    <div className="bg-indigo-700 p-6 text-white pt-12 rounded-b-[40px] shadow-lg">
-                        <h1 className="text-2xl font-bold italic">Meeting Hub AI v4.3</h1>
-                        <p className="text-indigo-200 text-[10px] font-bold">Tech Director's Assistant</p>
+                <div className="max-w-md mx-auto bg-white min-h-screen relative flex flex-col shadow-2xl overflow-hidden">
+                    <div className="bg-indigo-800 p-6 text-white pt-12 rounded-b-[40px] shadow-lg flex justify-between items-center">
+                        <div>
+                            <h1 className="text-xl font-bold italic">Meeting Hub AI v4.4</h1>
+                            <p className="text-indigo-200 text-[10px] font-bold uppercase tracking-tighter">Professional Tech Director Kit</p>
+                        </div>
+                        <i data-lucide="shield-check" className="text-indigo-300 w-8 h-8 opacity-50"></i>
                     </div>
 
-                    <div className="flex-1 p-6 overflow-y-auto pb-32">
+                    <div className="flex-1 p-5 overflow-y-auto pb-32">
                         {activeTab === 'home' && (
-                            <div className="space-y-6">
-                                <div className="flex justify-around py-4">
+                            <div className="space-y-5">
+                                <div className="flex justify-around bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
                                     <div className="text-center">
-                                        <button onClick={toggleRecording} className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-all ${isRecording ? 'recording-active' : 'bg-indigo-600'}`}>
-                                            <i data-lucide={isRecording ? "square" : "mic"} className="text-white"></i>
+                                        <button onClick={toggleRecording} className={`w-14 h-14 rounded-full flex items-center justify-center shadow-md transition-all ${isRecording ? 'recording-active' : 'bg-indigo-600'}`}>
+                                            <i data-lucide={isRecording ? "square" : "mic"} className="text-white w-6 h-6"></i>
                                         </button>
-                                        <span className="text-[10px] mt-2 block font-bold text-slate-500">녹음 제어</span>
+                                        <span className="text-[10px] mt-2 block font-bold text-slate-400">연속 녹음</span>
                                     </div>
                                     <div className="text-center">
-                                        <button onClick={handleCameraClick} disabled={isAnalyzing} className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center shadow-lg disabled:opacity-50">
-                                            {isAnalyzing ? <div className="loader"></div> : <i data-lucide="camera" className="text-white"></i>}
+                                        <button onClick={() => fileInputRef.current.click()} disabled={isAnalyzing} className="w-14 h-14 rounded-full bg-slate-800 flex items-center justify-center shadow-md">
+                                            {isAnalyzing ? <div className="loader"></div> : <i data-lucide="camera" className="text-white w-6 h-6"></i>}
                                         </button>
                                         <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="camera" onChange={handleFileChange} />
-                                        <span className="text-[10px] mt-2 block font-bold text-slate-500">명함 텍스트화</span>
+                                        <span className="text-[10px] mt-2 block font-bold text-slate-400">명함 추출</span>
                                     </div>
                                 </div>
 
-                                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xl space-y-4">
+                                <div className="space-y-3">
+                                    {/* 기본 정보 */}
                                     <div className="flex gap-2">
-                                        <input type="date" className="flex-1 p-3 bg-slate-50 rounded-xl text-sm border" value={newCard.date} onChange={e => setNewCard({...newCard, date: e.target.value})} />
-                                        <input type="text" placeholder="회의명/성함" className="flex-[2] p-3 bg-slate-50 rounded-xl text-sm border" value={newCard.name} onChange={e => setNewCard({...newCard, name: e.target.value})} />
-                                    </div>
-                                    
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-indigo-600 ml-1">명함 추출 정보</label>
-                                        <textarea placeholder="카메라 촬영 시 여기에 텍스트가 자동 추출됩니다." className="w-full p-3 bg-indigo-50/30 rounded-xl text-sm h-20 border-indigo-100 border" value={newCard.personInfo} onChange={e => setNewCard({...newCard, personInfo: e.target.value})}></textarea>
+                                        <input type="date" className="flex-1 p-3 bg-white rounded-xl text-xs border shadow-sm" value={newCard.date} onChange={e => setNewCard({...newCard, date: e.target.value})} />
+                                        <input type="text" placeholder="회의/프로젝트 제목" className="flex-[2] p-3 bg-white rounded-xl text-xs border shadow-sm font-bold" value={newCard.title} onChange={e => setNewCard({...newCard, title: e.target.value})} />
                                     </div>
 
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-slate-400 ml-1">인물 관련 메모</label>
-                                        <input type="text" placeholder="예: 무대감독, OO협회 사무국장 등" className="w-full p-3 bg-slate-50 rounded-xl text-sm border" value={newCard.personMemo} onChange={e => setNewCard({...newCard, personMemo: e.target.value})} />
+                                    {/* 명함 상세 정보 섹션 */}
+                                    <div className="bg-indigo-50/50 p-4 rounded-3xl border border-indigo-100 space-y-2">
+                                        <label className="text-[10px] font-bold text-indigo-600 flex items-center"><i data-lucide="user-plus" className="w-3 h-3 mr-1"></i>명함 상세 정보 (자동 추출 가능)</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <input type="text" placeholder="소속(회사)" className="p-2 bg-white rounded-lg text-xs border" value={newCard.company} onChange={e=>setNewCard({...newCard, company:e.target.value})} />
+                                            <input type="text" placeholder="성함" className="p-2 bg-white rounded-lg text-xs border" value={newCard.name} onChange={e=>setNewCard({...newCard, name:e.target.value})} />
+                                            <input type="text" placeholder="연락처" className="p-2 bg-white rounded-lg text-xs border" value={newCard.phone} onChange={e=>setNewCard({...newCard, phone:e.target.value})} />
+                                            <input type="text" placeholder="이메일" className="p-2 bg-white rounded-lg text-xs border" value={newCard.email} onChange={e=>setNewCard({...newCard, email:e.target.value})} />
+                                        </div>
+                                        <input type="text" placeholder="주소" className="w-full p-2 bg-white rounded-lg text-xs border" value={newCard.address} onChange={e=>setNewCard({...newCard, address:e.target.value})} />
                                     </div>
 
+                                    {/* 별도 메모 섹션 */}
                                     <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-red-400 ml-1">녹음 요약본 (실시간)</label>
-                                        <textarea placeholder="마이크 인식 내용이 여기에 표시됩니다." className="w-full p-3 bg-slate-50 rounded-xl text-sm h-32 border" value={newCard.voiceSummary} onChange={e => setNewCard({...newCard, voiceSummary: e.target.value})}></textarea>
+                                        <label className="text-[10px] font-bold text-slate-500 ml-1 flex items-center"><i data-lucide="edit-3" className="w-3 h-3 mr-1"></i>인물 및 회의 관련 메모</label>
+                                        <textarea placeholder="명함 주인에 대한 특징이나 회의 핵심 메모를 작성하세요." className="w-full p-3 bg-white rounded-xl text-xs h-20 border shadow-sm" value={newCard.personMemo} onChange={e => setNewCard({...newCard, personMemo: e.target.value})}></textarea>
                                     </div>
 
-                                    <button onClick={saveEntry} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg active:scale-95 transition-transform">모든 데이터 통합 저장</button>
+                                    {/* 녹음 본 요약 섹션 */}
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-red-500 ml-1 flex items-center"><i data-lucide="message-square" className="w-3 h-3 mr-1"></i>실시간 누적 기록 (무한 녹음)</label>
+                                        <div className="relative">
+                                            <textarea placeholder="마이크 인식 내용이 끊김 없이 여기에 쌓입니다." className="w-full p-3 bg-white rounded-xl text-xs h-32 border shadow-sm italic text-slate-600" value={newCard.voiceSummary} readOnly></textarea>
+                                            {isRecording && <div className="absolute top-2 right-2 flex space-x-1"><div className="w-2 h-2 bg-red-500 rounded-full animate-ping"></div></div>}
+                                        </div>
+                                    </div>
+
+                                    <button onClick={saveEntry} className="w-full py-4 bg-indigo-700 text-white rounded-2xl font-bold shadow-xl active:scale-95 transition-transform">모든 정보 통합 저장하기</button>
                                 </div>
                             </div>
                         )}
 
                         {activeTab === 'list' && (
                             <div className="space-y-4">
-                                <h2 className="font-bold text-lg flex items-center justify-between">
-                                    <span>기록 아카이브</span>
-                                    <span className="text-[10px] bg-indigo-100 text-indigo-600 px-2 py-1 rounded-full">{cards.length} 건</span>
-                                </h2>
+                                <h2 className="font-bold text-lg flex justify-between items-center">기록 아카이브 <i data-lucide="layers" className="w-5 h-5 text-indigo-300"></i></h2>
                                 {cards.map(c => (
-                                    <div key={c.id} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm border-l-4 border-indigo-500 space-y-3">
-                                        <div className="flex justify-between items-center">
-                                            <span className="font-bold text-indigo-900">{c.name}</span>
-                                            <span className="text-[10px] text-slate-400">{c.date}</span>
+                                    <div key={c.id} className="bg-white p-4 rounded-3xl border border-slate-100 shadow-md border-t-4 border-indigo-500 space-y-3">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <span className="font-bold text-indigo-900 text-sm">[{c.title || '무제'}] {c.name}</span>
+                                                <p className="text-[9px] text-slate-400 mt-1">{c.company} | {c.date}</p>
+                                            </div>
+                                            <button onClick={() => setCards(cards.filter(i => i.id !== c.id))} className="text-slate-200 hover:text-red-400"><i data-lucide="x-circle" className="w-4 h-4"></i></button>
                                         </div>
-                                        <div className="text-[11px] space-y-2">
-                                            {c.personInfo && <p className="text-slate-600"><strong>[명함]</strong> {c.personInfo.substring(0, 50)}...</p>}
-                                            {c.personMemo && <p className="text-blue-600"><strong>[메모]</strong> {c.personMemo}</p>}
-                                            {c.voiceSummary && <p className="text-slate-500 italic">" {c.voiceSummary.substring(0, 50)}... "</p>}
+                                        <div className="bg-slate-50 p-3 rounded-xl space-y-2 text-[10px]">
+                                            <p><strong>📞 연락처:</strong> {c.phone} / {c.email}</p>
+                                            <p><strong>📝 메모:</strong> {c.personMemo}</p>
+                                            <p className="text-slate-400 italic line-clamp-2">" {c.voiceSummary} "</p>
                                         </div>
-                                        <button onClick={() => copyForAI(c)} className="w-full py-3 bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center">
-                                            <i data-lucide="share-2" className="w-3 h-3 mr-2"></i> AI 요약 데이터 생성
-                                        </button>
+                                        <button onClick={() => {
+                                            const text = `[통합 데이터 요청]\n날짜: ${c.date}\n회의: ${c.title}\n성함: ${c.name} (${c.company})\n연락처: ${c.phone} / ${c.email}\n주소: ${c.address}\n\n[메모]\n${c.personMemo}\n\n[녹음기록]\n${c.voiceSummary}\n\n이 내용을 요약하고 캘린더 일정을 만들어줘.`;
+                                            navigator.clipboard.writeText(text);
+                                            alert("전체 데이터가 복사되었습니다!");
+                                        }} className="w-full py-2 bg-slate-800 text-white rounded-xl text-[10px] font-bold">전체 데이터 AI 전달 복사</button>
                                     </div>
                                 ))}
                             </div>
                         )}
                     </div>
 
-                    <div className="absolute bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-100 flex justify-around p-6 rounded-t-[40px] z-20">
-                        <button onClick={() => setActiveTab('home')} className={activeTab === 'home' ? 'text-indigo-600' : 'text-slate-300'}><i data-lucide="plus-circle"></i></button>
-                        <button onClick={() => setActiveTab('list')} className={activeTab === 'list' ? 'text-indigo-600' : 'text-slate-300'}><i data-lucide="database"></i></button>
+                    <div className="bg-white/90 backdrop-blur-md border-t border-slate-100 flex justify-around p-6 rounded-t-[40px] shadow-2xl">
+                        <button onClick={() => setActiveTab('home')} className={activeTab === 'home' ? 'text-indigo-600 scale-125' : 'text-slate-300'}><i data-lucide="pen-tool"></i></button>
+                        <button onClick={() => setActiveTab('list')} className={activeTab === 'list' ? 'text-indigo-600 scale-125' : 'text-slate-300'}><i data-lucide="briefcase"></i></button>
                     </div>
                 </div>
             );

@@ -3,19 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Meeting Hub AI v4.4</title>
+    <title>Meeting Hub AI v4.5</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
-    <script src="https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js"></script>
+    <script src="https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700&display=swap');
-        body { font-family: 'Pretendard', sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { font-family: 'Pretendard', sans-serif; -webkit-tap-highlight-color: transparent; overflow: hidden; }
         .recording-active { animation: pulse 1.5s infinite; background-color: #ef4444 !important; }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
-        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #4f46e5; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block; }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #4f46e5; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
@@ -23,7 +23,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useCallback } = React;
 
         const MeetingHub = () => {
             const [activeTab, setActiveTab] = useState('home');
@@ -31,24 +31,22 @@
             const [isAnalyzing, setIsAnalyzing] = useState(false);
             const [cards, setCards] = useState([]);
             
-            // 텍스트 누적을 위한 Ref
             const cumulativeTranscript = useRef("");
-
             const [newCard, setNewCard] = useState({ 
-                title: "", 
-                date: new Date().toISOString().split('T')[0],
-                // 명함 세부 정보
+                title: "", date: new Date().toISOString().split('T')[0],
                 company: "", name: "", phone: "", email: "", address: "",
-                personMemo: "", // 인물/회의 관련 별도 메모
-                voiceSummary: "" // 누적 녹음 본
+                personMemo: "", voiceSummary: ""
             });
 
             const recognitionRef = useRef(null);
             const fileInputRef = useRef(null);
 
+            // 데이터 로드
             useEffect(() => {
                 const savedData = localStorage.getItem('hyo_v4_data');
-                if (savedData) setCards(JSON.parse(savedData));
+                if (savedData) {
+                    try { setCards(JSON.parse(savedData)); } catch(e) { console.error(e); }
+                }
 
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 if (SpeechRecognition) {
@@ -71,160 +69,172 @@
                     };
 
                     recognitionRef.current.onend = () => {
-                        if (isRecording) recognitionRef.current.start();
+                        // isRecording 상태일 때만 다시 시작
+                        if (window.isRecordingGlobal) recognitionRef.current.start();
                     };
                 }
-            }, [isRecording]);
+            }, []);
 
             useEffect(() => {
                 localStorage.setItem('hyo_v4_data', JSON.stringify(cards));
                 if (window.lucide) window.lucide.createIcons();
-            }, [activeTab, cards, isRecording, isAnalyzing]);
+            }, [activeTab, cards]);
 
             const toggleRecording = () => {
                 if (isRecording) {
+                    window.isRecordingGlobal = false;
                     recognitionRef.current.stop();
                     setIsRecording(false);
                 } else {
+                    window.isRecordingGlobal = true;
                     recognitionRef.current.start();
                     setIsRecording(true);
                 }
             };
 
             const parseOCR = (text) => {
+                if (!text) return;
                 const phoneRegex = /(010-\d{3,4}-\d{4}|0\d{1,2}-\d{3,4}-\d{4})/g;
                 const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
                 const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
+                // 안전하게 상태 업데이트
                 setNewCard(prev => ({
                     ...prev,
-                    company: lines[0] || "", // 첫 줄은 보통 회사명
-                    name: lines[1] || "",    // 둘째 줄은 보통 이름
-                    phone: text.match(phoneRegex)?.[0] || "",
-                    email: text.match(emailRegex)?.[0] || "",
-                    address: lines.find(l => l.includes("시 ") || l.includes("구 ") || l.includes("동 ")) || ""
+                    company: lines[0] || prev.company,
+                    name: lines[1] || prev.name,
+                    phone: text.match(phoneRegex)?.[0] || prev.phone,
+                    email: text.match(emailRegex)?.[0] || prev.email,
+                    address: lines.find(l => l.includes("시 ") || l.includes("구 ") || l.includes("동 ")) || prev.address
                 }));
             };
 
             const handleFileChange = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
+
                 setIsAnalyzing(true);
                 try {
-                    const result = await Tesseract.recognize(file, 'kor+eng');
-                    parseOCR(result.data.text);
-                    alert("명함 분석 및 자동 필터링 완료!");
-                } catch (e) { alert("인식 실패: " + e.message); }
-                finally { setIsAnalyzing(false); }
+                    // Tesseract v4 방식
+                    const worker = await Tesseract.createWorker();
+                    await worker.loadLanguage('kor+eng');
+                    await worker.initialize('kor+eng');
+                    const { data: { text } } = await worker.recognize(file);
+                    await worker.terminate();
+                    
+                    parseOCR(text);
+                    setTimeout(() => alert("명함 정보가 자동으로 입력되었습니다."), 100);
+                } catch (err) {
+                    alert("인식 오류: " + err.message);
+                } finally {
+                    setIsAnalyzing(false);
+                    e.target.value = ""; // 입력 초기화
+                }
             };
 
             const saveEntry = () => {
-                if (!newCard.title && !newCard.name) return alert("제목이나 이름을 입력하세요.");
-                setCards([{ ...newCard, id: Date.now() }, ...cards]);
+                if (!newCard.title && !newCard.name) return alert("제목이나 이름을 입력해주세요.");
+                setCards(prev => [{ ...newCard, id: Date.now() }, ...prev]);
                 setNewCard({ title: "", date: new Date().toISOString().split('T')[0], company: "", name: "", phone: "", email: "", address: "", personMemo: "", voiceSummary: "" });
                 cumulativeTranscript.current = "";
-                alert("통합 기록 저장 완료!");
+                alert("성공적으로 저장되었습니다.");
             };
 
             return (
-                <div className="max-w-md mx-auto bg-white min-h-screen relative flex flex-col shadow-2xl overflow-hidden">
-                    <div className="bg-indigo-800 p-6 text-white pt-12 rounded-b-[40px] shadow-lg flex justify-between items-center">
+                <div className="max-w-md mx-auto bg-white h-screen relative flex flex-col shadow-2xl">
+                    {/* 상단바 */}
+                    <div className="bg-indigo-700 p-5 text-white pt-12 rounded-b-[30px] flex justify-between items-center shrink-0">
                         <div>
-                            <h1 className="text-xl font-bold italic">Meeting Hub AI v4.4</h1>
-                            <p className="text-indigo-200 text-[10px] font-bold uppercase tracking-tighter">Professional Tech Director Kit</p>
+                            <h1 className="text-xl font-bold italic">Meeting Hub v4.5</h1>
+                            <p className="text-[9px] font-bold opacity-70">PROFESSIONAL STABLE VERSION</p>
                         </div>
-                        <i data-lucide="shield-check" className="text-indigo-300 w-8 h-8 opacity-50"></i>
+                        <i data-lucide="activity" className="w-6 h-6 text-indigo-300"></i>
                     </div>
 
-                    <div className="flex-1 p-5 overflow-y-auto pb-32">
-                        {activeTab === 'home' && (
-                            <div className="space-y-5">
-                                <div className="flex justify-around bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+                    {/* 메인 영역 */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
+                        {activeTab === 'home' ? (
+                            <div className="space-y-4">
+                                {/* 제어 버튼 */}
+                                <div className="flex justify-around bg-indigo-50/50 p-4 rounded-3xl border border-indigo-100">
                                     <div className="text-center">
-                                        <button onClick={toggleRecording} className={`w-14 h-14 rounded-full flex items-center justify-center shadow-md transition-all ${isRecording ? 'recording-active' : 'bg-indigo-600'}`}>
+                                        <button onClick={toggleRecording} className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-all ${isRecording ? 'recording-active' : 'bg-indigo-600'}`}>
                                             <i data-lucide={isRecording ? "square" : "mic"} className="text-white w-6 h-6"></i>
                                         </button>
-                                        <span className="text-[10px] mt-2 block font-bold text-slate-400">연속 녹음</span>
+                                        <span className="text-[10px] mt-2 block font-bold text-slate-500">연속 녹음</span>
                                     </div>
                                     <div className="text-center">
-                                        <button onClick={() => fileInputRef.current.click()} disabled={isAnalyzing} className="w-14 h-14 rounded-full bg-slate-800 flex items-center justify-center shadow-md">
+                                        <button onClick={() => fileInputRef.current.click()} disabled={isAnalyzing} className="w-14 h-14 rounded-full bg-slate-800 flex items-center justify-center shadow-lg">
                                             {isAnalyzing ? <div className="loader"></div> : <i data-lucide="camera" className="text-white w-6 h-6"></i>}
                                         </button>
                                         <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="camera" onChange={handleFileChange} />
-                                        <span className="text-[10px] mt-2 block font-bold text-slate-400">명함 추출</span>
+                                        <span className="text-[10px] mt-2 block font-bold text-slate-500">명함 텍스트화</span>
                                     </div>
                                 </div>
 
+                                {/* 입력 폼 */}
                                 <div className="space-y-3">
-                                    {/* 기본 정보 */}
                                     <div className="flex gap-2">
-                                        <input type="date" className="flex-1 p-3 bg-white rounded-xl text-xs border shadow-sm" value={newCard.date} onChange={e => setNewCard({...newCard, date: e.target.value})} />
-                                        <input type="text" placeholder="회의/프로젝트 제목" className="flex-[2] p-3 bg-white rounded-xl text-xs border shadow-sm font-bold" value={newCard.title} onChange={e => setNewCard({...newCard, title: e.target.value})} />
+                                        <input type="date" className="flex-1 p-3 bg-white border rounded-xl text-xs shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none" value={newCard.date} onChange={e => setNewCard({...newCard, date: e.target.value})} />
+                                        <input type="text" placeholder="회의/프로젝트명" className="flex-[2] p-3 bg-white border rounded-xl text-xs shadow-sm font-bold outline-none" value={newCard.title} onChange={e => setNewCard({...newCard, title: e.target.value})} />
                                     </div>
 
-                                    {/* 명함 상세 정보 섹션 */}
-                                    <div className="bg-indigo-50/50 p-4 rounded-3xl border border-indigo-100 space-y-2">
-                                        <label className="text-[10px] font-bold text-indigo-600 flex items-center"><i data-lucide="user-plus" className="w-3 h-3 mr-1"></i>명함 상세 정보 (자동 추출 가능)</label>
+                                    <div className="bg-white p-4 rounded-2xl border shadow-sm space-y-2">
+                                        <p className="text-[10px] font-bold text-indigo-600">명함 추출 정보</p>
                                         <div className="grid grid-cols-2 gap-2">
-                                            <input type="text" placeholder="소속(회사)" className="p-2 bg-white rounded-lg text-xs border" value={newCard.company} onChange={e=>setNewCard({...newCard, company:e.target.value})} />
-                                            <input type="text" placeholder="성함" className="p-2 bg-white rounded-lg text-xs border" value={newCard.name} onChange={e=>setNewCard({...newCard, name:e.target.value})} />
-                                            <input type="text" placeholder="연락처" className="p-2 bg-white rounded-lg text-xs border" value={newCard.phone} onChange={e=>setNewCard({...newCard, phone:e.target.value})} />
-                                            <input type="text" placeholder="이메일" className="p-2 bg-white rounded-lg text-xs border" value={newCard.email} onChange={e=>setNewCard({...newCard, email:e.target.value})} />
-                                        </div>
-                                        <input type="text" placeholder="주소" className="w-full p-2 bg-white rounded-lg text-xs border" value={newCard.address} onChange={e=>setNewCard({...newCard, address:e.target.value})} />
-                                    </div>
-
-                                    {/* 별도 메모 섹션 */}
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-slate-500 ml-1 flex items-center"><i data-lucide="edit-3" className="w-3 h-3 mr-1"></i>인물 및 회의 관련 메모</label>
-                                        <textarea placeholder="명함 주인에 대한 특징이나 회의 핵심 메모를 작성하세요." className="w-full p-3 bg-white rounded-xl text-xs h-20 border shadow-sm" value={newCard.personMemo} onChange={e => setNewCard({...newCard, personMemo: e.target.value})}></textarea>
-                                    </div>
-
-                                    {/* 녹음 본 요약 섹션 */}
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-red-500 ml-1 flex items-center"><i data-lucide="message-square" className="w-3 h-3 mr-1"></i>실시간 누적 기록 (무한 녹음)</label>
-                                        <div className="relative">
-                                            <textarea placeholder="마이크 인식 내용이 끊김 없이 여기에 쌓입니다." className="w-full p-3 bg-white rounded-xl text-xs h-32 border shadow-sm italic text-slate-600" value={newCard.voiceSummary} readOnly></textarea>
-                                            {isRecording && <div className="absolute top-2 right-2 flex space-x-1"><div className="w-2 h-2 bg-red-500 rounded-full animate-ping"></div></div>}
+                                            <input type="text" placeholder="소속" className="p-2 bg-slate-50 rounded-lg text-xs border" value={newCard.company} onChange={e=>setNewCard({...newCard, company:e.target.value})} />
+                                            <input type="text" placeholder="성함" className="p-2 bg-slate-50 rounded-lg text-xs border" value={newCard.name} onChange={e=>setNewCard({...newCard, name:e.target.value})} />
+                                            <input type="text" placeholder="연락처" className="p-2 bg-slate-50 rounded-lg text-xs border" value={newCard.phone} onChange={e=>setNewCard({...newCard, phone:e.target.value})} />
+                                            <input type="text" placeholder="이메일" className="p-2 bg-slate-50 rounded-lg text-xs border" value={newCard.email} onChange={e=>setNewCard({...newCard, email:e.target.value})} />
                                         </div>
                                     </div>
 
-                                    <button onClick={saveEntry} className="w-full py-4 bg-indigo-700 text-white rounded-2xl font-bold shadow-xl active:scale-95 transition-transform">모든 정보 통합 저장하기</button>
+                                    <div className="space-y-1">
+                                        <p className="text-[10px] font-bold text-slate-500 ml-1">인물/회의 상세 메모</p>
+                                        <textarea placeholder="명함 주인 특징이나 주요 회의 내용을 적으세요." className="w-full p-3 bg-white border rounded-xl text-xs h-20 shadow-sm" value={newCard.personMemo} onChange={e => setNewCard({...newCard, personMemo: e.target.value})}></textarea>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <p className="text-[10px] font-bold text-red-500 ml-1">실시간 연속 녹음 내용</p>
+                                        <textarea placeholder="말씀하시는 내용이 끊김 없이 여기에 누적됩니다." className="w-full p-3 bg-slate-100 border rounded-xl text-xs h-32 shadow-inner italic text-slate-600" value={newCard.voiceSummary} readOnly></textarea>
+                                    </div>
+
+                                    <button onClick={saveEntry} className="w-full py-4 bg-indigo-700 text-white rounded-2xl font-bold shadow-xl active:scale-95 transition-transform flex items-center justify-center gap-2">
+                                        <i data-lucide="save" className="w-5 h-5"></i> 통합 데이터 저장
+                                    </button>
                                 </div>
                             </div>
-                        )}
-
-                        {activeTab === 'list' && (
+                        ) : (
                             <div className="space-y-4">
-                                <h2 className="font-bold text-lg flex justify-between items-center">기록 아카이브 <i data-lucide="layers" className="w-5 h-5 text-indigo-300"></i></h2>
+                                <h2 className="font-bold text-lg flex justify-between items-center">아카이브 <span>{cards.length} 건</span></h2>
                                 {cards.map(c => (
-                                    <div key={c.id} className="bg-white p-4 rounded-3xl border border-slate-100 shadow-md border-t-4 border-indigo-500 space-y-3">
+                                    <div key={c.id} className="bg-white p-4 rounded-3xl border shadow-md border-l-4 border-indigo-600 space-y-3">
                                         <div className="flex justify-between items-start">
                                             <div>
-                                                <span className="font-bold text-indigo-900 text-sm">[{c.title || '무제'}] {c.name}</span>
-                                                <p className="text-[9px] text-slate-400 mt-1">{c.company} | {c.date}</p>
+                                                <p className="font-bold text-indigo-900 text-sm">{c.title || '제목없음'}</p>
+                                                <p className="text-[9px] text-slate-400">{c.name} ({c.company}) | {c.date}</p>
                                             </div>
-                                            <button onClick={() => setCards(cards.filter(i => i.id !== c.id))} className="text-slate-200 hover:text-red-400"><i data-lucide="x-circle" className="w-4 h-4"></i></button>
+                                            <button onClick={() => setCards(prev => prev.filter(i => i.id !== c.id))} className="text-slate-300 hover:text-red-500"><i data-lucide="trash" className="w-4 h-4"></i></button>
                                         </div>
-                                        <div className="bg-slate-50 p-3 rounded-xl space-y-2 text-[10px]">
-                                            <p><strong>📞 연락처:</strong> {c.phone} / {c.email}</p>
-                                            <p><strong>📝 메모:</strong> {c.personMemo}</p>
-                                            <p className="text-slate-400 italic line-clamp-2">" {c.voiceSummary} "</p>
+                                        <div className="text-[10px] bg-slate-50 p-2 rounded-lg space-y-1">
+                                            <p>📞 {c.phone} / {c.email}</p>
+                                            <p>📝 {c.personMemo}</p>
                                         </div>
                                         <button onClick={() => {
-                                            const text = `[통합 데이터 요청]\n날짜: ${c.date}\n회의: ${c.title}\n성함: ${c.name} (${c.company})\n연락처: ${c.phone} / ${c.email}\n주소: ${c.address}\n\n[메모]\n${c.personMemo}\n\n[녹음기록]\n${c.voiceSummary}\n\n이 내용을 요약하고 캘린더 일정을 만들어줘.`;
+                                            const text = `[데이터 요청]\n날짜: ${c.date}\n회의: ${c.title}\n성함: ${c.name} (${c.company})\n연락처: ${c.phone} / ${c.email}\n주소: ${c.address}\n메모: ${c.personMemo}\n녹음: ${c.voiceSummary}`;
                                             navigator.clipboard.writeText(text);
-                                            alert("전체 데이터가 복사되었습니다!");
-                                        }} className="w-full py-2 bg-slate-800 text-white rounded-xl text-[10px] font-bold">전체 데이터 AI 전달 복사</button>
+                                            alert("복사 완료! Gemini에 붙여넣으세요.");
+                                        }} className="w-full py-2 bg-slate-800 text-white rounded-xl text-[10px] font-bold">AI 전달 데이터 복사</button>
                                     </div>
                                 ))}
                             </div>
                         )}
                     </div>
 
-                    <div className="bg-white/90 backdrop-blur-md border-t border-slate-100 flex justify-around p-6 rounded-t-[40px] shadow-2xl">
-                        <button onClick={() => setActiveTab('home')} className={activeTab === 'home' ? 'text-indigo-600 scale-125' : 'text-slate-300'}><i data-lucide="pen-tool"></i></button>
-                        <button onClick={() => setActiveTab('list')} className={activeTab === 'list' ? 'text-indigo-600 scale-125' : 'text-slate-300'}><i data-lucide="briefcase"></i></button>
+                    {/* 하단 탭 */}
+                    <div className="absolute bottom-0 w-full bg-white/95 backdrop-blur-md border-t flex justify-around p-6 rounded-t-[35px] shadow-2xl z-30">
+                        <button onClick={() => setActiveTab('home')} className={activeTab === 'home' ? 'text-indigo-600' : 'text-slate-300'}><i data-lucide="plus-circle"></i></button>
+                        <button onClick={() => setActiveTab('list')} className={activeTab === 'list' ? 'text-indigo-600' : 'text-slate-300'}><i data-lucide="database"></i></button>
                     </div>
                 </div>
             );
